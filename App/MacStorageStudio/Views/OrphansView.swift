@@ -24,10 +24,13 @@ struct OrphansView: View {
     var body: some View {
         HSplitView {
             appsList
-                .frame(minWidth: 240, idealWidth: 280)
+                .frame(minWidth: 220, idealWidth: 280, maxWidth: .infinity)
+                .frame(maxHeight: .infinity)
             orphansList
-                .frame(minWidth: 360)
+                .frame(minWidth: 320, idealWidth: 420, maxWidth: .infinity)
+                .frame(maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Orphans")
         .toolbar {
             ToolbarItem {

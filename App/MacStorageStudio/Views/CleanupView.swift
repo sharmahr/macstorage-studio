@@ -6,22 +6,46 @@ struct CleanupView: View {
     @Binding var selectedRecommendation: CleanupRecommendation?
     @Binding var confirmTrash: Bool
 
+    private var filteredRecommendations: [CleanupRecommendation] {
+        model.recommendations.filter { rec in
+            // Lightweight reuse of path/name/size filters
+            let entry = FileEntry(
+                sessionID: rec.sessionID,
+                path: rec.path,
+                name: (rec.path as NSString).lastPathComponent,
+                isDirectory: true,
+                size: rec.reclaimableBytes,
+                category: rec.category
+            )
+            return model.scanFilters.matches(entry)
+        }
+    }
+
     var body: some View {
-        Group {
-            if model.recommendations.isEmpty {
-                ContentUnavailableView(
-                    "No Recommendations",
-                    systemImage: "trash",
-                    description: Text("Complete a scan to see safe cleanup suggestions.")
-                )
-            } else {
-                List {
-                    ForEach(Array(model.recommendations), id: \.id) { rec in
-                        recommendationRow(rec)
+        VStack(spacing: 0) {
+            FilterBarView(filters: $model.scanFilters) {}
+            Group {
+                if filteredRecommendations.isEmpty {
+                    ContentUnavailableView(
+                        model.recommendations.isEmpty ? "No Recommendations" : "No Matches",
+                        systemImage: "trash",
+                        description: Text(
+                            model.recommendations.isEmpty
+                                ? "Complete a scan to see safe cleanup suggestions."
+                                : "No recommendations match the current filters."
+                        )
+                    )
+                } else {
+                    List {
+                        ForEach(Array(filteredRecommendations), id: \.id) { rec in
+                            recommendationRow(rec)
+                        }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Cleanup")
     }
 

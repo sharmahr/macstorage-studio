@@ -106,6 +106,7 @@ struct HistoryTrendsView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("History")
         .toolbar {
             ToolbarItem {

@@ -13,10 +13,13 @@ struct DuplicatesView: View {
     var body: some View {
         HSplitView {
             groupList
-                .frame(minWidth: 280, idealWidth: 320)
+                .frame(minWidth: 240, idealWidth: 300, maxWidth: .infinity)
+                .frame(maxHeight: .infinity)
             detail
-                .frame(minWidth: 360)
+                .frame(minWidth: 320, idealWidth: 420, maxWidth: .infinity)
+                .frame(maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Duplicates")
         .toolbar {
             ToolbarItem {

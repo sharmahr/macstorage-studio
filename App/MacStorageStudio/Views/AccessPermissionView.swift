@@ -1,92 +1,133 @@
 import SwiftUI
+import AppKit
 import MacStorageCore
 
-/// Single “Allow All Access” flow — no per-app or per-folder prompts.
 struct AccessPermissionView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var installMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Label("Storage Access", systemImage: "lock.shield")
-                .font(.title2.bold())
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    Text("Full Disk Access is required for a complete scan. macOS will not show this app in the list until you add it with the + button.")
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Storage Access")
+                }
 
-            Text("MacStorage Studio needs access to scan applications and their data. Instead of asking for each app or folder, grant access once.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(alignment: .leading, spacing: 10) {
-                bullet("All apps in /Applications and ~/Applications")
-                bullet("App support files, caches, and containers")
-                bullet("Home folder, Library, and attached volumes")
-            }
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Allow All") {
-                        Text(model.allowAllAccess ? "On" : "Off")
-                            .foregroundStyle(model.allowAllAccess ? .primary : .secondary)
-                    }
+                Section {
                     LabeledContent("Full Disk Access") {
                         Text(model.hasFullDiskAccess ? "Granted" : "Not granted")
-                            .foregroundStyle(model.hasFullDiskAccess ? Color.green : Color.orange)
+                            .foregroundStyle(model.hasFullDiskAccess ? Color.secondary : Color.orange)
                     }
-                    if model.allowAllAccess && !model.hasFullDiskAccess {
-                        Text("In System Settings → Privacy & Security → Full Disk Access, enable MacStorage Studio. If the scanner still cannot read app data, also enable ScannerWorker from the app package (Contents/MacOS). Then click Recheck.")
+                    LabeledContent("Install location") {
+                        Text(AccessController.shared.applicationsInstallURL.path)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
+                } header: {
+                    Text("Status")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
 
-            Spacer(minLength: 0)
-
-            VStack(spacing: 10) {
-                Button {
-                    model.enableAllowAllAccess()
-                } label: {
-                    Text("Allow All Access")
-                        .frame(maxWidth: .infinity)
+                Section {
+                    Text("The Full Disk Access list never auto-fills for this app. You must add it:")
+                        .foregroundStyle(.secondary)
+                    Text("1. Click “Install to Applications & Open Settings”.\n2. In Full Disk Access, click + (bottom left).\n3. In the file dialog, go to Applications and choose “MacStorage Studio”.\n4. Turn the switch ON.\n5. Click Recheck below.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } header: {
+                    Text("Add with +")
+                } footer: {
+                    Text("Apps such as Chrome appear because they were added earlier or shipped signed. MacStorage Studio must be added manually with +.")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .keyboardShortcut(.defaultAction)
 
-                if model.allowAllAccess {
-                    Button("Recheck Full Disk Access") {
-                        model.refreshAccessState()
-                        if model.hasFullDiskAccess {
-                            model.statusMessage = "Full Disk Access confirmed"
-                            model.showAccessSheet = false
-                            dismiss()
+                Section {
+                    Button("Install to Applications & Open Settings") {
+                        model.allowAllAccess = true
+                        AccessController.shared.allowAllAccess = true
+                        AccessController.shared.hasSeenOnboarding = true
+                        do {
+                            let url = try AccessController.shared.installToApplications()
+                            installMessage = "Installed to \(url.path). Use + and select MacStorage Studio."
+                            AccessController.shared.registerWithTCC()
+                            model.refreshAccessState()
+                            AccessController.shared.openFullDiskAccessSettings()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            }
+                        } catch {
+                            installMessage = error.localizedDescription
+                            model.enableAllowAllAccess()
                         }
                     }
-                    .frame(maxWidth: .infinity)
+
+                    Button("Recheck Full Disk Access") {
+                        model.probeFullDiskAccess()
+                        if model.hasFullDiskAccess {
+                            model.statusMessage = "Full Disk Access granted"
+                            AccessController.shared.hasSeenOnboarding = true
+                            model.showAccessSheet = false
+                            dismiss()
+                        } else {
+                            installMessage = "Still not granted. Click + in Full Disk Access and select MacStorage Studio from Applications."
+                        }
+                    }
+
+                    Button("Show App in Finder") {
+                        AccessController.shared.revealAppInFinder()
+                    }
 
                     Button("Open Full Disk Access Settings…") {
                         model.openFullDiskAccessSettings()
                     }
-                    .frame(maxWidth: .infinity)
+
+                    if let installMessage {
+                        Text(installMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } header: {
+                    Text("Actions")
                 }
 
+                Section {
+                    Button("Scan Home Folder Only") {
+                        Task {
+                            await model.startLimitedScan()
+                            dismiss()
+                        }
+                    }
+                } header: {
+                    Text("Without Full Disk Access")
+                } footer: {
+                    Text("Limited scan of your home folder. Some protected folders will be skipped.")
+                }
+            }
+            .formStyle(.grouped)
+
+            Divider()
+
+            HStack {
+                Spacer()
                 Button("Not Now") {
                     AccessController.shared.hasSeenOnboarding = true
                     model.showAccessSheet = false
                     dismiss()
                 }
-                .frame(maxWidth: .infinity)
+                .keyboardShortcut(.cancelAction)
             }
+            .padding()
         }
-        .padding(24)
-        .frame(width: 440, height: 420)
+        .frame(width: 500, height: 580)
         .onAppear {
             model.refreshAccessState()
+            AccessController.shared.registerWithTCC()
+            model.refreshAccessState()
         }
-    }
-
-    private func bullet(_ text: String) -> some View {
-        Label(text, systemImage: "checkmark.circle")
-            .foregroundStyle(.primary)
     }
 }

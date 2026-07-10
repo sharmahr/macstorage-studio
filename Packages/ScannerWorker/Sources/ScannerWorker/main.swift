@@ -3,27 +3,41 @@ import MacStorageCore
 import ScannerEngine
 
 /// Isolated scanner process. Communicates via newline-delimited JSON on stdin/stdout.
-/// Crashes here cannot take down the host app.
-
 final class StdoutEmitter: ScannerEventHandler, @unchecked Sendable {
     private let lock = NSLock()
-    private let encoder = JSONEncoder()
+    private let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        return e
+    }()
+
+    init() {
+        // Force line-buffered / unbuffered stdout so the app sees progress live.
+        setvbuf(stdout, nil, _IONBF, 0)
+        setvbuf(stderr, nil, _IONBF, 0)
+    }
 
     func emit(_ message: WorkerMessage) {
         lock.lock()
         defer { lock.unlock() }
-        guard let data = try? encoder.encode(message),
-              var line = String(data: data, encoding: .utf8) else { return }
-        line.append("\n")
-        FileHandle.standardOutput.write(Data(line.utf8))
+        guard let data = try? encoder.encode(message) else { return }
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data([0x0A]))
+        // Extra flush for good measure
+        fflush(stdout)
     }
 
     func scannerDidEmit(_ record: WorkerFileRecord) async {
         emit(.entry(record))
     }
 
-    func scannerDidProgress(scanned: Int, bytes: Int64, path: String, skippedSystem: Int) async {
-        emit(.progress(scanned: scanned, bytes: bytes, path: path, skippedSystem: skippedSystem))
+    func scannerDidProgress(scanned: Int, bytes: Int64, path: String, skippedSystem: Int, skippedPermission: Int) async {
+        emit(.progress(
+            scanned: scanned,
+            bytes: bytes,
+            path: path,
+            skippedSystem: skippedSystem,
+            skippedPermission: skippedPermission
+        ))
     }
 }
 
@@ -36,7 +50,6 @@ struct ScannerWorkerMain {
         let decoder = JSONDecoder()
         let scanner = FilesystemScanner()
 
-        // Read a single command line from stdin (one JSON object)
         guard let inputData = readStdinLine(),
               let command = try? decoder.decode(WorkerCommand.self, from: inputData) else {
             emitter.emit(.error(message: "Invalid or missing command on stdin", recoverable: false))
@@ -54,7 +67,8 @@ struct ScannerWorkerMain {
                 roots: roots,
                 excludePrefixes: command.excludePrefixes ?? SystemGuardrails.shared.excludePrefixes(),
                 checkpoint: command.checkpoint,
-                maxFileCount: command.maxFileCount
+                maxFileCount: command.maxFileCount,
+                progressEvery: 10
             )
             do {
                 let result = try await scanner.scan(configuration: config, handler: emitter)
@@ -74,8 +88,8 @@ struct ScannerWorkerMain {
             emitter.emit(.done(scanned: 0, bytes: 0, errors: 0, checkpoint: nil))
             exit(0)
         case "crash":
-            // Intentional hard crash for isolation testing — must not kill the host app.
             fputs("ScannerWorker simulating crash\n", stderr)
+            fflush(stderr)
             abort()
         default:
             emitter.emit(.error(message: "Unknown command \(command.cmd)", recoverable: false))

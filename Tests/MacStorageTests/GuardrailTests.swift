@@ -13,7 +13,6 @@ final class GuardrailTests: XCTestCase {
     func testUserLibraryNotBlockedBySystemLibraryRule() {
         let g = SystemGuardrails.shared
         let homeLib = NSHomeDirectory() + "/Library/Caches"
-        // ~/Library should not match /Library prefix incorrectly
         XCTAssertFalse(g.isProtected(homeLib) && g.evaluation(for: homeLib).matchedRuleIDs.contains("system-library"))
     }
 
@@ -39,5 +38,15 @@ final class GuardrailTests: XCTestCase {
         let roots = SystemGuardrails.shared.filterRoots(["/System", NSHomeDirectory(), "/Applications"])
         XCTAssertFalse(roots.contains("/System"))
         XCTAssertTrue(roots.contains(NSHomeDirectory()))
+    }
+
+    func testHomeIsScannableButNotDeletable() {
+        let g = SystemGuardrails.shared
+        let home = NSHomeDirectory()
+        XCTAssertTrue(g.isDeleteProtected(home), "must not trash home root")
+        XCTAssertFalse(g.isScanExcluded(home), "must scan home root")
+        XCTAssertFalse(g.isScanExcluded(home + "/Documents"))
+        XCTAssertTrue(g.isScanExcluded("/System/Library"))
+        XCTAssertFalse(g.isScanExcluded("/Applications"))
     }
 }

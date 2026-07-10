@@ -15,19 +15,26 @@ else
   BUILD_DIR="$ROOT/.build/debug"
 fi
 
-APP_ROOT="$ROOT/dist/MacStorageStudio.app/Contents"
-rm -rf "$ROOT/dist/MacStorageStudio.app"
-mkdir -p "$APP_ROOT/MacOS" "$APP_ROOT/Resources"
+# Prefer spaced name for System Settings display
+APP_NAME="MacStorage Studio.app"
+APP_PATH="$ROOT/dist/$APP_NAME"
+rm -rf "$APP_PATH" "$ROOT/dist/MacStorageStudio.app"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 
-cp "$BUILD_DIR/MacStorageStudio" "$APP_ROOT/MacOS/MacStorageStudio"
-cp "$BUILD_DIR/ScannerWorker" "$APP_ROOT/MacOS/ScannerWorker"
-cp "$ROOT/App/MacStorageStudio/Resources/Info.plist" "$APP_ROOT/Info.plist"
-# Patch executable name already correct
+cp "$BUILD_DIR/MacStorageStudio" "$APP_PATH/Contents/MacOS/MacStorageStudio"
+cp "$BUILD_DIR/ScannerWorker" "$APP_PATH/Contents/MacOS/ScannerWorker"
+chmod +x "$APP_PATH/Contents/MacOS/MacStorageStudio" "$APP_PATH/Contents/MacOS/ScannerWorker"
+cp "$ROOT/App/MacStorageStudio/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 
-# Ad-hoc sign for local run
-codesign --force --deep --sign - "$ROOT/dist/MacStorageStudio.app" 2>/dev/null || true
+# Ensure stable identity for Full Disk Access
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.macstoragestudio.app" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleName MacStorage Studio" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName MacStorage Studio" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
 
-echo "==> Built $ROOT/dist/MacStorageStudio.app"
-echo "    ScannerWorker: $APP_ROOT/MacOS/ScannerWorker"
-echo "    Run: open dist/MacStorageStudio.app"
-echo "    Or:  MACSTORAGE_SCANNER_WORKER=$APP_ROOT/MacOS/ScannerWorker $APP_ROOT/MacOS/MacStorageStudio"
+codesign --force --deep --sign - "$APP_PATH" 2>/dev/null || true
+
+# Compatibility symlink name without spaces
+ln -sfn "$APP_NAME" "$ROOT/dist/MacStorageStudio.app"
+
+echo "==> Built $APP_PATH"
+echo "    Run: open \"dist/MacStorage Studio.app\""

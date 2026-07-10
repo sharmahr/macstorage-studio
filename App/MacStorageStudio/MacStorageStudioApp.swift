@@ -8,7 +8,8 @@ struct MacStorageStudioApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appModel)
-                .frame(minWidth: 960, minHeight: 640)
+                .preferredColorScheme(appModel.preferredColorScheme)
+                .frame(minWidth: 1100, minHeight: 720)
         }
         .commands {
             CommandGroup(replacing: .newItem) {}

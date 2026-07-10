@@ -10,14 +10,24 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
         } detail: {
-            VStack(spacing: 0) {
-                ScanProgressBanner()
-                detail
+            NavigationStack {
+                ZStack(alignment: .top) {
+                    detail
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    VStack(spacing: 0) {
+                        ScanProgressBanner()
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(model.isScanning || model.session != nil)
+                }
+                .toolbar { toolbar }
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .toolbar { toolbar }
+        .preferredColorScheme(model.preferredColorScheme)
         .alert("Error", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -52,9 +62,10 @@ struct ContentView: View {
 
     private var sidebar: some View {
         List(selection: $model.destination) {
-            Section {
+            Section("Browse") {
                 ForEach([StudioDestination.overview, .hierarchy, .graph, .search], id: \.self) { dest in
                     Label(dest.title, systemImage: dest.systemImage)
+                        .labelStyle(.titleAndIcon)
                         .tag(dest)
                 }
             }
@@ -62,30 +73,35 @@ struct ContentView: View {
             Section("Intelligence") {
                 ForEach([StudioDestination.history, .orphans, .duplicates, .cleanup], id: \.self) { dest in
                     Label(dest.title, systemImage: dest.systemImage)
+                        .labelStyle(.titleAndIcon)
                         .tag(dest)
                 }
             }
 
             Section("Safety") {
                 Label(StudioDestination.guardrails.title, systemImage: StudioDestination.guardrails.systemImage)
+                    .labelStyle(.titleAndIcon)
                     .tag(StudioDestination.guardrails)
             }
 
             Section("Access") {
                 if model.allowAllAccess && model.hasFullDiskAccess {
                     Label("All apps allowed", systemImage: "checkmark.shield")
+                        .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)
                 } else if model.allowAllAccess {
                     Button {
                         model.showAccessSheet = true
                     } label: {
                         Label("Finish Full Disk Access…", systemImage: "exclamationmark.shield")
+                            .labelStyle(.titleAndIcon)
                     }
                 } else {
                     Button {
                         model.showAccessSheet = true
                     } label: {
                         Label("Allow All Access…", systemImage: "lock.shield")
+                            .labelStyle(.titleAndIcon)
                     }
                 }
             }
@@ -94,6 +110,7 @@ struct ContentView: View {
                 ForEach(model.volumes) { vol in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(vol.name)
+                            .lineLimit(1)
                         ProgressView(
                             value: Double(vol.usedCapacity),
                             total: Double(max(vol.totalCapacity, 1))
@@ -101,6 +118,7 @@ struct ContentView: View {
                         Text("\(ByteFormat.string(vol.usedCapacity)) of \(ByteFormat.string(vol.totalCapacity))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     .padding(.vertical, 2)
                     .accessibilityElement(children: .combine)
@@ -112,15 +130,16 @@ struct ContentView: View {
                     Text(note)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         .safeAreaInset(edge: .bottom) {
             Text(model.statusMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(.bar)
@@ -271,6 +290,7 @@ struct OverviewView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Overview")
     }
 }
@@ -281,7 +301,11 @@ struct HierarchyView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        List(model.hierarchy, id: \.path) { entry in
+        VStack(spacing: 0) {
+            FilterBarView(filters: $model.scanFilters) {
+                model.applyFiltersToHierarchy()
+            }
+            List(model.hierarchy, id: \.path) { entry in
             Button {
                 if entry.isDirectory {
                     Task { await model.loadChildren(of: entry.path) }
@@ -312,7 +336,10 @@ struct HierarchyView: View {
                 }
             }
             .buttonStyle(.plain)
+            }
+            .listStyle(.inset)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Hierarchy")
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -342,9 +369,15 @@ struct HierarchyView: View {
         .overlay {
             if model.hierarchy.isEmpty {
                 ContentUnavailableView(
-                    "No Items",
-                    systemImage: "folder",
-                    description: Text(model.session == nil ? "Run a scan to browse folders." : "This folder has no scanned children.")
+                    model.scanFilters.isActive ? "No Matches" : "No Items",
+                    systemImage: model.scanFilters.isActive ? "line.3.horizontal.decrease.circle" : "folder",
+                    description: Text(
+                        model.session == nil
+                            ? "Run a scan to browse folders."
+                            : (model.scanFilters.isActive
+                               ? "Try clearing filters or broadening the query."
+                               : "This folder has no scanned children.")
+                    )
                 )
             }
         }
@@ -357,7 +390,11 @@ struct SearchView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        List(model.searchResults, id: \.path) { file in
+        VStack(spacing: 0) {
+            FilterBarView(filters: $model.scanFilters) {
+                Task { await model.runSearch() }
+            }
+            List(model.searchResults, id: \.path) { file in
             VStack(alignment: .leading, spacing: 2) {
                 Text(file.name)
                 Text(file.path)
@@ -368,7 +405,9 @@ struct SearchView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Search")
         .searchable(text: $model.searchQuery, prompt: "File or folder name")
         .onSubmit(of: .search) {

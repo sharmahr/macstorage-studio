@@ -5,7 +5,7 @@ final class WorkerProtocolTests: XCTestCase {
     func testRoundTrip() throws {
         let messages: [WorkerMessage] = [
             .hello(version: 1),
-            .progress(scanned: 10, bytes: 100, path: "/tmp", skippedSystem: 3),
+            .progress(scanned: 10, bytes: 100, path: "/tmp", skippedSystem: 3, skippedPermission: 1),
             .done(scanned: 10, bytes: 100, errors: 0, checkpoint: "/tmp/x"),
             .error(message: "nope", recoverable: true),
         ]

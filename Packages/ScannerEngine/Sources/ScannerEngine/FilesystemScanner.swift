@@ -28,7 +28,7 @@ public struct ScannerConfiguration: Sendable {
 
 public protocol ScannerEventHandler: AnyObject, Sendable {
     func scannerDidEmit(_ record: WorkerFileRecord) async
-    func scannerDidProgress(scanned: Int, bytes: Int64, path: String, skippedSystem: Int) async
+    func scannerDidProgress(scanned: Int, bytes: Int64, path: String, skippedSystem: Int, skippedPermission: Int) async
 }
 
 public actor FilesystemScanner {
@@ -96,6 +96,8 @@ public actor FilesystemScanner {
         var lastPath: String?
         let fm = FileManager.default
         var resumePassed = configuration.checkpoint == nil
+        final class PermCounter: @unchecked Sendable { var value = 0 }
+        let permissionSkips = PermCounter()
 
         for root in configuration.roots {
             if Self.shouldSkip(path: root, excludes: configuration.excludePrefixes) {
@@ -124,7 +126,10 @@ public actor FilesystemScanner {
                 at: URL(fileURLWithPath: root),
                 includingPropertiesForKeys: Self.resourceKeys,
                 options: [.skipsPackageDescendants],
-                errorHandler: { _, _ in true }
+                errorHandler: { _, _ in
+                    permissionSkips.value += 1
+                    return true
+                }
             ) else {
                 errors += 1
                 continue
@@ -179,12 +184,12 @@ public actor FilesystemScanner {
                 }
 
                 if scanned % configuration.progressEvery == 0 {
-                    await handler.scannerDidProgress(scanned: scanned, bytes: bytes, path: path, skippedSystem: skipped)
+                    await handler.scannerDidProgress(scanned: scanned, bytes: bytes, path: path, skippedSystem: skipped, skippedPermission: permissionSkips.value)
                 }
             }
         }
 
-        await handler.scannerDidProgress(scanned: scanned, bytes: bytes, path: lastPath ?? "", skippedSystem: skipped)
+        await handler.scannerDidProgress(scanned: scanned, bytes: bytes, path: lastPath ?? "", skippedSystem: skipped, skippedPermission: permissionSkips.value)
         return (scanned, bytes, errors, lastPath)
     }
 
@@ -206,12 +211,13 @@ public actor FilesystemScanner {
     ]
 
     public static func shouldSkip(path: String, excludes: [String]) -> Bool {
-        // Prefer centralized guardrails when available (always safe for OS paths)
-        if SystemGuardrails.shared.isProtected(path) {
+        // Scan exclusions only — do not use delete-protection (that blocks $HOME)
+        if SystemGuardrails.shared.isScanExcluded(path) {
             return true
         }
+        let standardized = (path as NSString).standardizingPath
         for prefix in excludes {
-            if path == prefix || path.hasPrefix(prefix + "/") {
+            if standardized == prefix || standardized.hasPrefix(prefix + "/") {
                 return true
             }
         }

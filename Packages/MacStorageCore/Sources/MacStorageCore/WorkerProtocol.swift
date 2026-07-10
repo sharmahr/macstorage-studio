@@ -3,14 +3,14 @@ import Foundation
 /// Line-delimited JSON protocol between the app and the isolated ScannerWorker process.
 public enum WorkerMessage: Codable, Sendable, Equatable {
     case hello(version: Int)
-    case progress(scanned: Int, bytes: Int64, path: String, skippedSystem: Int)
+    case progress(scanned: Int, bytes: Int64, path: String, skippedSystem: Int, skippedPermission: Int)
     case entry(WorkerFileRecord)
     case done(scanned: Int, bytes: Int64, errors: Int, checkpoint: String?)
     case error(message: String, recoverable: Bool)
     case log(String)
 
     private enum CodingKeys: String, CodingKey {
-        case type, version, scanned, bytes, path, entry, errors, checkpoint, message, recoverable, text, skippedSystem
+        case type, version, scanned, bytes, path, entry, errors, checkpoint, message, recoverable, text, skippedSystem, skippedPermission
     }
 
     private enum Kind: String, Codable {
@@ -23,12 +23,13 @@ public enum WorkerMessage: Codable, Sendable, Equatable {
         case .hello(let version):
             try container.encode(Kind.hello.rawValue, forKey: .type)
             try container.encode(version, forKey: .version)
-        case .progress(let scanned, let bytes, let path, let skippedSystem):
+        case .progress(let scanned, let bytes, let path, let skippedSystem, let skippedPermission):
             try container.encode(Kind.progress.rawValue, forKey: .type)
             try container.encode(scanned, forKey: .scanned)
             try container.encode(bytes, forKey: .bytes)
             try container.encode(path, forKey: .path)
             try container.encode(skippedSystem, forKey: .skippedSystem)
+            try container.encode(skippedPermission, forKey: .skippedPermission)
         case .entry(let record):
             try container.encode(Kind.entry.rawValue, forKey: .type)
             try container.encode(record, forKey: .entry)
@@ -59,7 +60,8 @@ public enum WorkerMessage: Codable, Sendable, Equatable {
                 scanned: try container.decode(Int.self, forKey: .scanned),
                 bytes: try container.decode(Int64.self, forKey: .bytes),
                 path: try container.decode(String.self, forKey: .path),
-                skippedSystem: try container.decodeIfPresent(Int.self, forKey: .skippedSystem) ?? 0
+                skippedSystem: try container.decodeIfPresent(Int.self, forKey: .skippedSystem) ?? 0,
+                skippedPermission: try container.decodeIfPresent(Int.self, forKey: .skippedPermission) ?? 0
             )
         case .entry:
             self = .entry(try container.decode(WorkerFileRecord.self, forKey: .entry))

@@ -75,6 +75,12 @@ final class AppModel: ObservableObject {
     @Published var guardrailRules: [GuardrailRuleUI] = []
     @Published var activeExcludePrefixes: [String] = []
     @Published var lastSkippedSystem: Int = 0
+    @Published var lastSkippedPermission: Int = 0
+    @Published var scanFilters = ScanFilters()
+    @Published var allHierarchy: [FileEntry] = []
+    @Published var showFilterBar = true
+    /// system | light | dark
+    @Published var appearanceMode: String = UserDefaults.standard.string(forKey: "mss.appearance") ?? "system"
 
     // Analysis
     @Published var dependencyGraph = DependencyGraph()
@@ -178,15 +184,34 @@ final class AppModel: ObservableObject {
         AccessController.shared.openFullDiskAccessSettings()
     }
 
-    /// Call before scan: if allow-all not chosen, present sheet instead of per-path prompts.
-    func prepareScanAccess() -> Bool {
+    func probeFullDiskAccess() {
+        AccessController.shared.registerWithTCC()
         refreshAccessState()
-        if !AccessController.shared.allowAllAccess {
+        roots = AccessController.shared.scanRootsAllowingLimited()
+    }
+
+    /// Prepares roots for scanning. Always allows a scan (limited or full).
+    /// Shows access sheet as a soft reminder when Full Disk Access is missing.
+    func prepareScanAccess(forceFull: Bool = false) -> Bool {
+        refreshAccessState()
+        if forceFull && !AccessController.shared.allowAllAccess {
             showAccessSheet = true
             return false
         }
-        roots = AccessController.shared.scanRoots()
+        if AccessController.shared.allowAllAccess && !hasFullDiskAccess {
+            // Soft reminder — still allow scan with whatever TCC allows
+            statusMessage = "Full Disk Access incomplete — results may be limited"
+        }
+        roots = AccessController.shared.scanRootsAllowingLimited()
         return true
+    }
+
+    func startLimitedScan() async {
+        AccessController.shared.hasSeenOnboarding = true
+        showAccessSheet = false
+        // Temporary limited roots even if allowAll is on? Prefer home-only for explicit limited.
+        roots = SystemGuardrails.shared.filterRoots(VolumeEnumerator.limitedScanRoots())
+        await startScan(resume: false, skipAccessGate: true)
     }
 
     func loadLatestSession() async {
@@ -213,18 +238,20 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func startScan(resume: Bool = false) async {
+    func startScan(resume: Bool = false, skipAccessGate: Bool = false) async {
         guard !isScanning else { return }
         guard let scanner else {
             errorMessage = ScannerClientError.workerNotFound.localizedDescription
             return
         }
 
-        if !resume {
-            // One allow-all consent instead of individual app/folder prompts
-            guard prepareScanAccess() else { return }
-        } else {
-            roots = AccessController.shared.scanRoots()
+        if !resume && !skipAccessGate {
+            guard prepareScanAccess(forceFull: false) else { return }
+        } else if !skipAccessGate {
+            roots = AccessController.shared.scanRootsAllowingLimited()
+        }
+        if roots.isEmpty {
+            roots = SystemGuardrails.shared.filterRoots([NSHomeDirectory()])
         }
 
         isScanning = true
@@ -255,13 +282,15 @@ final class AppModel: ObservableObject {
             return
         }
 
-        statusMessage = "Scanning…"
+        let scanRoots = SystemGuardrails.shared.filterRoots(roots)
+        statusMessage = "Scanning \(scanRoots.count) root(s)…"
+        progress = ScanProgress(scanned: 0, bytes: 0, currentPath: scanRoots.first ?? "…")
         let sessionID = session.id
         let classifier = self.classifier
 
         do {
             let result = try await scanner.scan(
-                roots: SystemGuardrails.shared.filterRoots(roots),
+                roots: scanRoots,
                 excludePrefixes: SystemGuardrails.shared.excludePrefixes(),
                 checkpoint: checkpoint,
                 onEntry: { record in
@@ -307,7 +336,14 @@ final class AppModel: ObservableObject {
             try await reloadDerived(sessionID: sessionID)
             await runOrphanAnalysis()
             await refreshHistory()
-            statusMessage = "Scan complete — \(result.scanned) items"
+            var done = "Scan complete — \(result.scanned.formatted()) items · \(ByteFormat.string(result.bytes))"
+            if lastSkippedPermission > 0 {
+                done += " · \(lastSkippedPermission.formatted()) permission-denied"
+            }
+            if !hasFullDiskAccess {
+                done += " · enable Full Disk Access for complete results"
+            }
+            statusMessage = done
         } catch let err as ScannerClientError {
             try? await flushBuffer()
             switch err {
@@ -374,10 +410,38 @@ final class AppModel: ObservableObject {
     func loadChildren(of path: String?) async {
         guard let session else { return }
         do {
-            hierarchy = try store.children(sessionID: session.id, parentPath: path)
+            allHierarchy = try store.children(sessionID: session.id, parentPath: path)
             selectedPath = path
+            applyFiltersToHierarchy()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func applyFiltersToHierarchy() {
+        hierarchy = scanFilters.apply(allHierarchy)
+    }
+
+    func setAppearance(_ mode: String) {
+        appearanceMode = mode
+        UserDefaults.standard.set(mode, forKey: "mss.appearance")
+    }
+
+    var preferredColorScheme: ColorScheme? {
+        switch appearanceMode {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+
+    func clearFilters() {
+        scanFilters = ScanFilters()
+        applyFiltersToHierarchy()
+        if !searchQuery.isEmpty {
+            Task { await runSearch() }
+        } else {
+            searchResults = []
         }
     }
 
@@ -389,7 +453,8 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            searchResults = try store.search(sessionID: session.id, query: q)
+            let raw = try store.search(sessionID: session.id, query: q, limit: 500)
+            searchResults = scanFilters.apply(raw)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -480,13 +545,19 @@ final class AppModel: ObservableObject {
     }
 
     private func applyProgress(_ progress: ScanProgress) {
+        // Explicit main-actor publish so Progress banner re-renders during long scans
         self.progress = progress
         lastSkippedSystem = progress.skippedSystem
-        var status = "Scanned \(progress.scanned) · \(ByteFormat.string(progress.bytes))"
+        lastSkippedPermission = progress.skippedPermission
+        var parts = ["Scanning \(progress.scanned.formatted())", ByteFormat.string(progress.bytes)]
         if progress.skippedSystem > 0 {
-            status += " · \(progress.skippedSystem) system paths skipped"
+            parts.append("\(progress.skippedSystem.formatted()) system skipped")
         }
-        statusMessage = status
+        if progress.skippedPermission > 0 {
+            parts.append("\(progress.skippedPermission.formatted()) no access")
+        }
+        statusMessage = parts.joined(separator: " · ")
+        objectWillChange.send()
         if progress.workerRestarts > 0 {
             lastCrashNote = "Scanner worker restarted \(progress.workerRestarts)× — resume automatic."
         }
@@ -525,11 +596,16 @@ final class AppModel: ObservableObject {
         largestFiles = try store.largestEntries(sessionID: sessionID, limit: 40)
         recommendations = try store.recommendations(sessionID: sessionID)
         if let root = session?.roots.first {
-            hierarchy = try store.children(sessionID: sessionID, parentPath: root)
-            if hierarchy.isEmpty {
-                hierarchy = try store.children(sessionID: sessionID, parentPath: nil)
+            allHierarchy = try store.children(sessionID: sessionID, parentPath: root)
+            if allHierarchy.isEmpty {
+                allHierarchy = try store.children(sessionID: sessionID, parentPath: nil)
             }
             selectedPath = root
+            applyFiltersToHierarchy()
+        }
+        if scanFilters.isActive || !searchQuery.isEmpty {
+            // keep filtered largest list
+            largestFiles = scanFilters.apply(largestFiles)
         }
         rebuildGraph()
     }

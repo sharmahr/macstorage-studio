@@ -9,6 +9,7 @@ struct GraphCanvasView: View {
     @State private var selectedID: String?
     @State private var filter: GraphNodeKind?
     @State private var search = ""
+    @State private var canvasSize: CGSize = CGSize(width: 800, height: 500)
 
     private var graph: DependencyGraph { model.dependencyGraph }
 
@@ -24,7 +25,7 @@ struct GraphCanvasView: View {
     }
 
     private var layout: [String: CGPoint] {
-        Self.layout(nodes: filteredNodes, size: CGSize(width: 880, height: 560))
+        Self.layout(nodes: filteredNodes, size: canvasSize)
     }
 
     private var visibleEdges: [GraphEdge] {
@@ -39,34 +40,59 @@ struct GraphCanvasView: View {
     var body: some View {
         VStack(spacing: 0) {
             controls
-            Divider()
-            ZStack {
-                canvas
-                    .scaleEffect(scale)
-                    .offset(offset)
-                    .gesture(drag)
-                    .gesture(magnify)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.bar)
 
-                if filteredNodes.isEmpty {
-                    EmptyStateView(
-                        systemImage: "point.3.connected.trianglepath.dotted",
-                        title: "No Graph Data",
-                        message: "Run a scan to map volumes, applications, caches, and relationships.",
-                        actionTitle: model.isScanning ? nil : "Scan",
-                        action: model.isScanning ? nil : { Task { await model.startScan() } }
-                    )
+            Divider()
+
+            GeometryReader { geo in
+                let size = geo.size
+                ZStack {
+                    canvasContent(size: size)
+                        .scaleEffect(scale)
+                        .offset(offset)
+                        .gesture(drag)
+                        .gesture(magnify)
+
+                    if filteredNodes.isEmpty {
+                        EmptyStateView(
+                            systemImage: "point.3.connected.trianglepath.dotted",
+                            title: "No Graph Data",
+                            message: "Run a scan to map volumes, applications, caches, and relationships.",
+                            actionTitle: model.isScanning ? nil : "Scan",
+                            action: model.isScanning ? nil : { Task { await model.startScan() } }
+                        )
+                    }
+                }
+                .frame(width: size.width, height: size.height)
+                .clipped()
+                .onAppear { canvasSize = size }
+                .onChange(of: geo.size) { _, newSize in
+                    canvasSize = newSize
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
             if let selectedNode {
                 Divider()
                 inspector(selectedNode)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Graph")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Reset View") {
+                    offset = .zero
+                    scale = 1
+                }
+            }
+        }
     }
 
     private var controls: some View {
-        HStack {
+        HStack(spacing: 12) {
             Picker("Kind", selection: $filter) {
                 Text("All").tag(GraphNodeKind?.none)
                 ForEach(GraphNodeKind.allCases, id: \.self) { kind in
@@ -74,29 +100,24 @@ struct GraphCanvasView: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 140)
+            .frame(minWidth: 120, idealWidth: 140, maxWidth: 180)
 
-            TextField("Filter", text: $search)
+            TextField("Filter nodes", text: $search)
                 .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 200)
+                .frame(maxWidth: 260)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Text("\(filteredNodes.count) nodes")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            Button("Reset View") {
-                offset = .zero
-                scale = 1
-            }
+                .fixedSize()
         }
-        .padding(10)
     }
 
-    private var canvas: some View {
-        Canvas { context, size in
-            let positions = layout
+    private func canvasContent(size: CGSize) -> some View {
+        let positions = Self.layout(nodes: filteredNodes, size: size)
+        return Canvas { context, canvasSize in
             for edge in visibleEdges {
                 guard let a = positions[edge.sourceID], let b = positions[edge.targetID] else { continue }
                 var path = Path()
@@ -110,11 +131,11 @@ struct GraphCanvasView: View {
                 )
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(Color(nsColor: .textBackgroundColor)) // adapts light/dark
         .overlay {
             ZStack {
                 ForEach(filteredNodes) { node in
-                    if let p = layout[node.id] {
+                    if let p = positions[node.id] {
                         nodeView(node)
                             .position(p)
                             .onTapGesture { selectedID = node.id }
@@ -122,7 +143,7 @@ struct GraphCanvasView: View {
                 }
             }
         }
-        .frame(width: 880, height: 560)
+        .frame(width: size.width, height: size.height)
     }
 
     private func nodeView(_ node: GraphNode) -> some View {
@@ -196,15 +217,17 @@ struct GraphCanvasView: View {
     }
 
     static func layout(nodes: [GraphNode], size: CGSize) -> [String: CGPoint] {
-        let cx = size.width / 2
-        let cy = size.height / 2
+        let cx = max(size.width / 2, 1)
+        let cy = max(size.height / 2, 1)
+        let scale = min(size.width, size.height) / 500
         var result: [String: CGPoint] = [:]
         let rings: [(GraphNodeKind, CGFloat)] = [
-            (.volume, 60), (.application, 140), (.directory, 220),
-            (.package, 280), (.cache, 320), (.orphan, 360), (.file, 380),
+            (.volume, 60), (.application, 120), (.directory, 180),
+            (.package, 230), (.cache, 270), (.orphan, 300), (.file, 320),
         ]
-        for (kind, radius) in rings {
+        for (kind, baseRadius) in rings {
             let subset = nodes.filter { $0.kind == kind }
+            let radius = baseRadius * max(scale, 0.55)
             for (i, node) in subset.enumerated() {
                 let angle = (Double(i) / Double(max(subset.count, 1))) * .pi * 2 - .pi / 2
                 result[node.id] = CGPoint(
@@ -215,7 +238,8 @@ struct GraphCanvasView: View {
         }
         for (i, node) in nodes.enumerated() where result[node.id] == nil {
             let angle = Double(i) * 0.7
-            result[node.id] = CGPoint(x: cx + cos(angle) * 180, y: cy + sin(angle) * 180)
+            let radius: CGFloat = 160 * max(scale, 0.55)
+            result[node.id] = CGPoint(x: cx + cos(angle) * radius, y: cy + sin(angle) * radius)
         }
         return result
     }

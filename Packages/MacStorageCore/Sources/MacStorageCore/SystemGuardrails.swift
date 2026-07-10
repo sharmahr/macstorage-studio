@@ -181,9 +181,68 @@ public final class SystemGuardrails: @unchecked Sendable {
         activeRules().flatMap(\.containsFragments)
     }
 
-    /// Whether a path is blocked by an active guardrail.
+    /// Delete/trash protection (includes home root, /Applications root, etc.).
     public func isProtected(_ path: String) -> Bool {
+        isDeleteProtected(path)
+    }
+
+    /// Never trash these — includes home folder root and critical volume roots.
+    public func isDeleteProtected(_ path: String) -> Bool {
         evaluation(for: path).isProtected
+    }
+
+    /// Skip during filesystem walk. Does **not** treat home or /Applications as excluded roots
+    /// (those are only delete-protected). Only OS/system catalog rules apply.
+    public func isScanExcluded(_ path: String) -> Bool {
+        let standardized = (path as NSString).standardizingPath
+        let home = NSHomeDirectory()
+
+        // Always allow walking the user's home tree and Applications tree
+        if standardized == home || standardized.hasPrefix(home + "/") {
+            // Still skip if somehow under a system fragment inside home (rare)
+            return matchesEnabledCatalog(standardized)
+        }
+        if standardized == "/Applications" || standardized.hasPrefix("/Applications/") {
+            return false
+        }
+        if standardized.hasPrefix("/Volumes/") {
+            // Still skip Time Machine mounts via catalog
+            return matchesEnabledCatalog(standardized)
+        }
+        if standardized == "/Users" {
+            // Scan /Users root is OK (children may be permission-denied)
+            return false
+        }
+
+        return matchesEnabledCatalog(standardized)
+    }
+
+    private func matchesEnabledCatalog(_ standardized: String) -> Bool {
+        for rule in catalog {
+            guard isEnabled(rule) else { continue }
+            for prefix in rule.prefixes {
+                if standardized == prefix || standardized.hasPrefix(prefix + "/") {
+                    return true
+                }
+                let s = standardized.lowercased()
+                let p = prefix.lowercased()
+                if s == p || s.hasPrefix(p + "/") {
+                    return true
+                }
+            }
+            for frag in rule.containsFragments {
+                if standardized.contains(frag) {
+                    return true
+                }
+            }
+            if rule.id == "os-binaries" {
+                let s = standardized
+                if s == "/usr" || (s.hasPrefix("/usr/") && !s.hasPrefix("/usr/local")) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     public struct Evaluation: Sendable, Equatable {

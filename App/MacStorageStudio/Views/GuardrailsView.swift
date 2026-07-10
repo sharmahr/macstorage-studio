@@ -80,6 +80,7 @@ struct GuardrailsView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Guardrails")
         .confirmationDialog(
             "Disable this protection?",
