@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 import MacStorageCore
 
 struct GraphCanvasView: View {
@@ -231,15 +232,15 @@ struct GraphCanvasView: View {
             for (i, node) in subset.enumerated() {
                 let angle = (Double(i) / Double(max(subset.count, 1))) * .pi * 2 - .pi / 2
                 result[node.id] = CGPoint(
-                    x: cx + CGFloat(cos(angle)) * radius,
-                    y: cy + CGFloat(sin(angle)) * radius
+                    x: cx + CGFloat(Darwin.cos(angle)) * radius,
+                    y: cy + CGFloat(Darwin.sin(angle)) * radius
                 )
             }
         }
         for (i, node) in nodes.enumerated() where result[node.id] == nil {
             let angle = Double(i) * 0.7
             let radius: CGFloat = 160 * max(scale, 0.55)
-            result[node.id] = CGPoint(x: cx + cos(angle) * radius, y: cy + sin(angle) * radius)
+            result[node.id] = CGPoint(x: cx + CGFloat(Darwin.cos(angle)) * radius, y: cy + CGFloat(Darwin.sin(angle)) * radius)
         }
         return result
     }
