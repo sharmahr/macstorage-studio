@@ -18,7 +18,7 @@ Official builds are published on **GitHub Releases**:
 | Item | Location |
 |------|----------|
 | **Latest release page** | https://github.com/sharmahr/macstorage-studio/releases/latest |
-| **App zip (example tag `v0.1.0`)** | https://github.com/sharmahr/macstorage-studio/releases/download/v0.1.0/MacStorageStudio-0.1.0-macos-arm64.zip |
+| **App zip (example tag `v0.2.0`)** | https://github.com/sharmahr/macstorage-studio/releases/download/v0.2.0/MacStorageStudio-0.2.0-macos-arm64.zip |
 
 After each tagged release (`v*`), GitHub Actions builds `MacStorageStudio.app`, zips it, and attaches it to that release so users can download without building from source.
 
@@ -45,19 +45,19 @@ make app
 open dist/MacStorageStudio.app
 
 # Release zip (same layout as CI)
-./scripts/package-release.sh 0.1.0
+./scripts/package-release.sh 0.2.0
 ```
 
 ## Publish a new downloadable build
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 That triggers [`.github/workflows/release-macos.yml`](.github/workflows/release-macos.yml), which uploads the zip to:
 
-`https://github.com/sharmahr/macstorage-studio/releases/download/v0.1.0/MacStorageStudio-0.1.0-macos-arm64.zip`
+`https://github.com/sharmahr/macstorage-studio/releases/download/v0.2.0/MacStorageStudio-0.2.0-macos-arm64.zip`
 
 You can also run **Actions → Release macOS App → Run workflow** manually.
 
