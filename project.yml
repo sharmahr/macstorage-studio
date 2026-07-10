@@ -1,0 +1,59 @@
+name: MacStorageStudio
+options:
+  bundleIdPrefix: com.macstoragestudio
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+packages:
+  MacStorageStudio:
+    path: .
+targets:
+  MacStorageStudio:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/MacStorageStudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.macstoragestudio.app
+        PRODUCT_NAME: MacStorageStudio
+        INFOPLIST_FILE: App/MacStorageStudio/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/MacStorageStudio/Resources/MacStorageStudio.entitlements
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_ALLOWED: "YES"
+        CODE_SIGNING_REQUIRED: "NO"
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks @executable_path"
+        GENERATE_INFOPLIST_FILE: false
+        COMBINE_HIDPI_IMAGES: true
+    dependencies:
+      - package: MacStorageStudio
+        product: MacStorageCore
+      - package: MacStorageStudio
+        product: MetadataStore
+      - package: MacStorageStudio
+        product: ScannerClient
+      - package: MacStorageStudio
+        product: Classifier
+      - package: MacStorageStudio
+        product: Recommendations
+      - package: MacStorageStudio
+        product: CleanupEngine
+      - target: ScannerWorker
+        embed: true
+        copy:
+          - path: ScannerWorker
+            destination: executables
+  ScannerWorker:
+    type: tool
+    platform: macOS
+    sources: []
+    settings:
+      base:
+        PRODUCT_NAME: ScannerWorker
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+    # Built via SPM; this target is a placeholder. Prefer scripts/build-app.sh

@@ -1,0 +1,107 @@
+name: Release macOS App
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label for the download (e.g. 0.1.0). Used when not tagging."
+        required: false
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build MacStorageStudio.app
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          swift --version
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ github.event.inputs.version }}"
+            V="${V#v}"
+            if [[ -z "$V" ]]; then V="0.1.0"; fi
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building version $V"
+
+      - name: Package app
+        run: ./scripts/package-release.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacStorageStudio-${{ steps.ver.outputs.version }}-macos-arm64
+          path: |
+            dist/MacStorageStudio-${{ steps.ver.outputs.version }}-macos-arm64.zip
+            dist/MacStorageStudio-${{ steps.ver.outputs.version }}-macos-arm64.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          TAG="v${V}"
+          ZIP="dist/MacStorageStudio-${V}-macos-arm64.zip"
+          SUM="${ZIP}.sha256"
+          TITLE="MacStorage Studio ${V}"
+          NOTES="$(cat <<MD
+          ## MacStorage Studio ${V}
+
+          ### Download
+          - **[MacStorageStudio-${V}-macos-arm64.zip](https://github.com/${{ github.repository }}/releases/download/${TAG}/MacStorageStudio-${V}-macos-arm64.zip)**
+
+          Direct asset URL (stable for this tag):
+          \`\`\`
+          https://github.com/${{ github.repository }}/releases/download/${TAG}/MacStorageStudio-${V}-macos-arm64.zip
+          \`\`\`
+
+          ### Install
+          1. Download the zip and unzip it.
+          2. Move \`MacStorageStudio.app\` to **Applications** (optional).
+          3. First launch: right-click the app → **Open** (unsigned build).
+          4. Grant **Full Disk Access** when prompted for deep scans.
+          5. Prefer **Allow All Access** in the app for full app scanning.
+
+          ### Checksum
+          \`\`\`
+          $(cat "$SUM")
+          \`\`\`
+
+          Built on macOS arm64 (Apple Silicon).
+          MD
+          )"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" "$SUM" --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" "$ZIP" "$SUM" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --latest
+          fi
+
+          echo "Download URL:"
+          echo "https://github.com/${{ github.repository }}/releases/download/${TAG}/MacStorageStudio-${V}-macos-arm64.zip"
