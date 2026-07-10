@@ -33,11 +33,14 @@ final class ScannerIsolationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let client = ScannerClient(workerURL: worker)
-        var count = 0
+        final class Counter: @unchecked Sendable {
+            var value = 0
+        }
+        let counter = Counter()
         let result = try await client.scan(roots: [dir.path], maxWorkerRestarts: 0) { _ in
-            count += 1
+            counter.value += 1
         }
         XCTAssertGreaterThanOrEqual(result.scanned, 1)
-        XCTAssertGreaterThanOrEqual(count, 1)
+        XCTAssertGreaterThanOrEqual(counter.value, 1)
     }
 }
